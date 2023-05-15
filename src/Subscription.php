@@ -34,6 +34,8 @@ class Subscription extends Model
 
     const STATUS_EXPIRED = 'expired';
 
+    const DEFAULT_TYPE = 'default';
+
     /**
      * The table associated with the model.
      *
@@ -102,6 +104,14 @@ class Subscription extends Model
     public function active(): bool
     {
         return $this->status === self::STATUS_ACTIVE;
+    }
+
+    /**
+     * Determine if the subscription's trial has expired.
+     */
+    public function hasExpiredTrial(): bool
+    {
+        return $this->trial_ends_at && $this->trial_ends_at->isPast();
     }
 
     /**

@@ -49,8 +49,9 @@ There are a few steps you'll need to take to install the package:
 2. Creating an API Key
 3. Connecting your store
 4. Configuring the Billable Model
-5. Connecting to Lemon JS
-6. Setting up webhooks
+5. Running Migrations
+6. Connecting to Lemon JS
+7. Setting up webhooks
 
 We'll go over each of these below.
 
@@ -74,7 +75,7 @@ When you're deploying your app to production, you'll have to create a new key in
 
 ### Store Identifier
 
-Your store identifier will be used when creating checkouts for your products. Go to [your Lemon Squeezy general settings](https://app.lemonsqueezy.com/settings/general) and copy the Store ID (the part after the `#` sign) into the env value below:
+Your store identifier will be used when creating checkouts for your products. Go to [your Lemon Squeezy stores settings](https://app.lemonsqueezy.com/settings/stores) and copy the Store ID (the part after the `#` sign) into the env value below:
 
 ```ini
 LEMON_SQUEEZY_STORE=your-lemon-squeezy-store-id
@@ -93,7 +94,17 @@ class User extends Authenticatable
 }
 ```
 
-Now your user model will have access to methods from our package to create checkouts in Lemon Squeezy for your products.
+Now your user model will have access to methods from our package to create checkouts in Lemon Squeezy for your products. Note that you can make any model type a billable as you wish. It's not required to use one specific model class.
+
+### Running Migrations
+
+The package comes with some migrations to store data received from Lemon Squeezy by webhooks. It'll add a `lemon_squeezy_customers` table which holds all info about a customer. This table is connected to a billable model of any model type you wish. It'll also add a `lemon_squeezy_subscriptions` table which holds info about subscriptions. Install these migrations by simply running `artisan migrate`:
+
+```bash
+php artisan migrate
+```
+
+If you want to customize these migrations, you can [overwrite them](#overwriting-migrations).
 
 ### Lemon JS
 
@@ -141,6 +152,27 @@ LEMON_SQUEEZY_SIGNING_SECRET=your-webhook-signing-secret
 
 Any incoming webhook will now first be verified before being executed.
 
+### Overwriting Migrations
+
+Lemon Squeezy for Laravel ships with some migrations to hold data sent over. If you're using something like a string based identifier for your billable model, like a UUID, or want to adjust something to the migrations you can overwrite them. First, publish these with the following command:
+
+```bash
+php artisan vendor:publish --tag="lemon-squeezy-migrations"
+```
+
+Then, ignore the package's migrations in your `AppServiceProvider`'s `register` method:
+
+```
+use LemonSqueezy\Laravel\LemonSqueezy;
+
+public function register(): void
+{
+    LemonSqueezy::ignoreMigrations();
+}
+```
+
+Now you'll rely on your own migrations rather than the package one. Please note though that you're now responsible as well for keeping these in sync withe package one manually whenever you upgrade the package.
+
 ## Checkouts
 
 With this package, you can easily create checkouts for your customers.
@@ -153,9 +185,7 @@ For example, to create a checkout for a single-payment, use a variant ID of a pr
 use Illuminate\Http\Request;
  
 Route::get('/buy', function (Request $request) {
-    return redirect(
-        $request->user()->checkout('variant-id')
-    );
+    return $request->user()->checkout('variant-id');
 });
 ```
 
@@ -165,8 +195,6 @@ This will automatically redirect your customer to a Lemon Squeezy checkout where
 > When creating a checkout for your store, each time you redirect a checkout object or call `url` on the checkout object, an API call to Lemon Squeezy will be made. These calls are expensive and can be time and resource consuming for your app. If you are creating the same session over and over again you may want to cache these urls. 
 
 ### Overlay Widget
-
-> **Note** the overlay widget currently has [a pending issue](https://github.com/lmsqueezy/laravel/issues/4).
 
 Instead of redirecting your customer to a checkout screen, you can also create a checkout button which will render a checkout overlay on your page. To do this, pass the `$checkout` object to a view:
 
@@ -230,14 +258,12 @@ Additionally, you may also pass this data on the fly by using the following meth
 use Illuminate\Http\Request;
  
 Route::get('/buy', function (Request $request) {
-    return redirect(
-        $request->user()->checkout('variant-id')
-            ->withName('John Doe')
-            ->withEmail('john@example.com')
-            ->withBillingAddress('US', '10038') // Country & Zip Code
-            ->withTaxNumber('123456679')
-            ->withDiscountCode('PROMO')
-    );
+    return $request->user()->checkout('variant-id')
+        ->withName('John Doe')
+        ->withEmail('john@example.com')
+        ->withBillingAddress('US', '10038') // Country & Zip Code
+        ->withTaxNumber('123456679')
+        ->withDiscountCode('PROMO');
 });
 ```
 
@@ -273,9 +299,7 @@ You can also [pass along custom data with your checkouts](https://docs.lemonsque
 use Illuminate\Http\Request;
  
 Route::get('/buy', function (Request $request) {
-    return redirect(
-        $request->user()->checkout('variant-id', custom: ['foo' => 'bar'])
-    );
+    return $request->user()->checkout('variant-id', custom: ['foo' => 'bar']);
 });
 ```
 
@@ -290,6 +314,12 @@ When working with custom data there are a few reserved keywords for this library
 - `subscription_type`
 
 Attempting to use any of these will result in an exception being thrown.
+
+## Customers
+
+### Updating Customers
+
+Right now, it's not possible to update customer objects. Meaning, when they fill out their name, email address, city, region and country initially, there's no possibility of updating it later. To change these fields for a customer in Lemon Squeezy, you'll need to let your customer [contact Lemon Squeezy support](https://www.lemonsqueezy.com/help) so they can do it for you.
 
 ## Subscriptions
 
@@ -309,9 +339,7 @@ Starting subscriptions is easy. For this, we need the variant id from our produc
 use Illuminate\Http\Request;
  
 Route::get('/subscribe', function (Request $request) {
-    return redirect(
-        $request->user()->subscribe('variant-id')
-    );
+    return $request->user()->subscribe('variant-id');
 });
 ```
 
@@ -449,13 +477,41 @@ use Illuminate\Http\Request;
 Route::get('/update-payment-info', function (Request $request) {
     $subscription = $request->user()->subscription();
 
-    return redirect(
-        $subscription->updatePaymentMethodUrl()
-    );
+    return view('billing', [
+        'paymentMethodUrl' => $subscription->updatePaymentMethodUrl(),
+    ]);
 });
 ```
 
-To make the URL open in a more seamless overlay on top of your app (similar to the checkout overlay), you may use [Lemon.js](https://docs.lemonsqueezy.com/help/lemonjs/opening-overlays#updating-payment-details-overlay) to open the URL with the `LemonSqueezy.Url.Open()` method.
+Alternatively, if you want the URL to open in a more seamless way on top of your app (similar to the checkout overlay), you may use [Lemon.js](https://docs.lemonsqueezy.com/help/lemonjs/opening-overlays#updating-payment-details-overlay) to open the URL with the `LemonSqueezy.Url.Open()` method. First, pass the url to a view:
+
+```php
+use Illuminate\Http\Request;
+ 
+Route::get('/update-payment-info', function (Request $request) {
+    $subscription = $request->user()->subscription();
+
+    return view('billing', [
+        'paymentMethodUrl' => $subscription->updatePaymentMethodUrl(),
+    ]);
+});
+```
+
+Then trigger it through a button:
+
+```blade
+<script defer>
+    function updatePM() {
+        LemonSqueezy.Url.Open('{!! $paymentMethodUrl !!}');
+    }
+</script>
+
+<button onclick="updatePM()">
+    Update payment method
+</button>
+```
+
+This requires you to have set up [Lemon.js](#lemon-js).
 
 ### Changing Plans
 
@@ -491,7 +547,7 @@ $user->subscription()->noProrate()->swap('variant-id');
 
 In some situation you may find yourself wanting to allow your customer to subscribe to multiple subscription types. For example, a gym may offer a swimming and weight lifting subscription. You can allow your customer to subscribe to either or both.
 
-To handle the different subscriptions you may provide a `type` of subscription as the second argument when starting a new one:
+To handle the different subscriptions you may provide a `type` of subscription as the second argument to `subscribe` when starting a new one:
 
 ```php
 $user = User::find(1);
@@ -504,10 +560,13 @@ Now you may always refer this specific subscription type by providing the `type`
 ```php
 $user = User::find(1);
 
-// Swap plans...
-$user->subscription('swimming')->swap('variant-id');
+// Retrieve the swimming subscription type...
+$subscription = $user->subscription('swimming');
 
-// Cancel...
+// Swap plans for the gym subscription type...
+$user->subscription('gym')->swap('variant-id');
+
+// Cancel the swimming subscription...
 $user->subscription('swimming')->cancel();
 ```
 
@@ -629,9 +688,7 @@ As soon as your customer is ready, or after their trial has expired, they may st
 use Illuminate\Http\Request;
 
 Route::get('/buy', function (Request $request) {
-    return redirect(
-        $request->user()->subscribe('variant-id')
-    );
+    return $request->user()->subscribe('variant-id');
 });
 ```
 
@@ -645,9 +702,7 @@ Another option is to require payment details when people want to trial your prod
 use Illuminate\Http\Request;
 
 Route::get('/buy', function (Request $request) {
-    return redirect(
-        $request->user()->subscribe('variant-id')
-    );
+    return $request->user()->subscribe('variant-id');
 });
 ```
 
@@ -656,11 +711,11 @@ After your customer is subscribed, they'll enter their trial period which you co
 To check if your customer is currently on their free trial, you may use the `onTrial` method on both the billable or an individual subscription:
 
 ```php
-if ($user->onTrial('default')) {
+if ($user->onTrial()) {
     // ...
 }
  
-if ($user->subscription('default')->onTrial()) {
+if ($user->subscription()->onTrial()) {
     // ...
 }
 ```
@@ -668,11 +723,11 @@ if ($user->subscription('default')->onTrial()) {
 To determine if a trial has expired, you may use the `hasExpiredTrial` method:
 
 ```php
-if ($user->hasExpiredTrial('default')) {
+if ($user->hasExpiredTrial()) {
     // ...
 }
  
-if ($user->subscription('default')->hasExpiredTrial()) {
+if ($user->subscription()->hasExpiredTrial()) {
     // ...
 }
 ```
@@ -746,7 +801,7 @@ Instead of listening to the `WebhookHandled` event, you may also subscribe to on
 - `LemonSqueezy\Laravel\Events\SubscriptionPaused`
 - `LemonSqueezy\Laravel\Events\SubscriptionUnpaused`
 
-All of these events contain a billable `$model` instance, a `$subscription` object and the event `$payload`. These can be access through their public properties.
+All of these events contain a billable `$model` instance, a `$subscription` object and the event `$payload`. These can be accessed through their public properties.
 
 ## Changelog
 

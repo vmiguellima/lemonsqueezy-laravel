@@ -4,6 +4,7 @@ namespace LemonSqueezy\Laravel\Concerns;
 
 use LemonSqueezy\Laravel\Checkout;
 use LemonSqueezy\Laravel\Exceptions\MissingStore;
+use LemonSqueezy\Laravel\Subscription;
 
 trait ManagesCheckouts
 {
@@ -35,7 +36,7 @@ trait ManagesCheckouts
     /**
      * Subscribe the customer to a new plan variant.
      */
-    public function subscribe(string $variant, string $type = 'default', array $options = [], array $custom = []): Checkout
+    public function subscribe(string $variant, string $type = Subscription::DEFAULT_TYPE, array $options = [], array $custom = []): Checkout
     {
         return $this->checkout($variant, $options, array_merge($custom, [
             'subscription_type' => $type,
