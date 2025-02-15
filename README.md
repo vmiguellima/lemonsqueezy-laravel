@@ -19,22 +19,18 @@ A package to easily integrate your [Laravel](https://laravel.com) application wi
 
 This package drew inspiration from [Cashier](https://github.com/laravel/cashier-stripe) which was created by [Taylor Otwell](https://twitter.com/taylorotwell).
 
-Lemon Squeezy for Laravel is maintained by [Dries Vints](https://twitter.com/driesvints). Any sponsorship to [help fund development off this package](https://github.com/sponsors/driesvints) is greatly appreciated ❤️
-
 We also recommend to read the Lemon Squeezy [docs](https://docs.lemonsqueezy.com/help) and [developer guide](https://docs.lemonsqueezy.com/guides/developer-guide).
-
-> This package is a work in progress. As long as there is no v1.0.0, breaking changes may occur in v0.x releases. No upgrade path between v0.x versions will be provided.
 
 ## Roadmap
 
 The below features are not yet in this package but are planned to be added in the future:
 
 - Subscription invoices
+- [Usage Based Billing](https://github.com/lmsqueezy/laravel/issues/55)
 - License keys
 - Marketing emails check
-- Product & variant listing
-- Custom priced checkouts
 - Create discount codes
+- [Nova integration](https://github.com/lmsqueezy/laravel/issues/51)
 
 ## Requirements
 
@@ -96,6 +92,9 @@ class User extends Authenticatable
 
 Now your user model will have access to methods from our package to create checkouts in Lemon Squeezy for your products. Note that you can make any model type a billable as you wish. It's not required to use one specific model class.
 
+> [!NOTE]
+> Every action on the library like charging, creating checkouts or subscribing will automatically create a customer in Lemon Squeezy for you and connect it to your billable. It should never be necessary to manually create a customer with the Lemon Squeezy API.  
+
 ### Running Migrations
 
 The package comes with some migrations to store data received from Lemon Squeezy by webhooks. It'll add a `lemon_squeezy_customers` table which holds all info about a customer. This table is connected to a billable model of any model type you wish. It'll also add a `lemon_squeezy_subscriptions` table which holds info about subscriptions. Install these migrations by simply running `artisan migrate`:
@@ -120,9 +119,33 @@ Lemon Squeezy uses its own JavaScript library to initiate its checkout widget. W
 
 ### Webhooks
 
-Finally, make sure to set up incoming webhooks. This is both needed in development as in production. Go to [your Lemon Squeezy's webhook settings](https://app.lemonsqueezy.com/settings/webhooks) and point the url to your exposed local app. You can use [Ngrok](https://ngrok.com/), [Expose](https://github.com/beyondcode/expose) or another tool of your preference for this.
+Finally, make sure to set up incoming webhooks. This is both needed in development as in production.
 
-Make sure to select all event types. The path you should point to is `/lemon-squeezy/webhook` by default. **We also very much recommend to [verify webhook signatures](#verifying-webhook-signatures).**
+#### Webhooks In Development
+
+The easiest way to set this up while developing your app is with the `php artisan lmsqueezy:listen` command that ships with this package. This command will setup a webhook through the Lemon Squeezy API, start listening for any events and remove the webhook when quitting the command.
+
+```bash
+php artisan lmsqueezy:listen
+```
+
+Although this command should always cleanup the webhook after itself, you may wish to cleanup any lingering webhooks with the `--cleanup` flag:
+
+```bash
+php artisan lmsqueezy:listen --cleanup
+```
+
+Currently, this command supports [Ngrok](https://ngrok.com/) and [Expose](https://github.com/beyondcode/expose).
+
+> [!WARNING]  
+> The `lmsqueezy:listen` command is currently not supported in Windows due to the lack of signal handling. Instead you can take the manual approach from the [webhooks in production](#webhooks-in-production) docs below. You'll still need to use a service like Ngrok or Expose to expose a publically accessible url.
+
+#### Webhooks In Production
+
+For production, we'll need to setup things manually. The package already ships with a route so all that's left is to go to [your Lemon Squeezy's webhook settings](https://app.lemonsqueezy.com/settings/webhooks) and point the url to your app's domain. The path you should point to is `/lemon-squeezy/webhook` by default. Make sure to select all event types.
+
+> [!NOTE]  
+> We also very much recommend to [verify webhook signatures](#verifying-webhook-signatures) in production.
 
 #### Webhooks & CSRF Protection
 
@@ -134,13 +157,29 @@ protected $except = [
 ];
 ```
 
+Or if you're using Laravel v11 and up, you should exclude `lemon-squeezy/*` in your application's `bootstrap/app.php` file:
+
+```php
+->withMiddleware(function (Middleware $middleware) {
+    $middleware->validateCsrfTokens(except: [
+        'lemon-squeezy/*',
+    ]);
+})
+```
+
 ## Upgrading
 
 Please review [our upgrade guide](./UPGRADE.md) when upgrading to a new version.
 
 ## Configuration
 
-The package offers various way to configure your experience with integrating with Lemon Squeezy.
+The package offers various way to configure your experience with integrating with Lemon Squeezy. 
+
+By default, we don't recommend publishing the config file as most things can be configured with environment variables. Should you still want to adjust the config file, you can publish it with the following command:
+
+```bash
+php artisan vendor:publish --tag="lemon-squeezy-config"
+```
 
 ### Verifying Webhook Signatures
 
@@ -162,7 +201,7 @@ php artisan vendor:publish --tag="lemon-squeezy-migrations"
 
 Then, ignore the package's migrations in your `AppServiceProvider`'s `register` method:
 
-```
+```php
 use LemonSqueezy\Laravel\LemonSqueezy;
 
 public function register(): void
@@ -172,6 +211,19 @@ public function register(): void
 ```
 
 Now you'll rely on your own migrations rather than the package one. Please note though that you're now responsible as well for keeping these in sync withe package one manually whenever you upgrade the package.
+
+## Commands
+
+Below you'll find a list of commands you can run to retrieve info from Lemon Squeezy:
+
+Command | Description
+--- | ---
+`php artisan lmsqueezy:products` | List all available products with their variants and prices
+`php artisan lmsqueezy:products 12345` | List a specific product by its ID with its variants and prices
+`php artisan lmsqueezy:licenses 12345` | List licenses generated for a given product ID
+`php artisan lmsqueezy:licenses -p 3 -s 20` | List the paginated result of all generated licenses
+`php artisan lmsqueezy:licenses --order=1234 --status=active` | List active licenses for a given order ID
+
 
 ## Checkouts
 
@@ -191,8 +243,24 @@ Route::get('/buy', function (Request $request) {
 
 This will automatically redirect your customer to a Lemon Squeezy checkout where the customer can buy your product.
 
-> **Note**
+> [!NOTE]
 > When creating a checkout for your store, each time you redirect a checkout object or call `url` on the checkout object, an API call to Lemon Squeezy will be made. These calls are expensive and can be time and resource consuming for your app. If you are creating the same session over and over again you may want to cache these urls. 
+
+#### Custom Priced Charges
+
+You can also overwrite the amount of a product variant by calling the `charge` method on a customer:
+
+```php
+use Illuminate\Http\Request;
+ 
+Route::get('/buy', function (Request $request) {
+    return $request->user()->charge(2500, 'variant-id');
+});
+```
+
+The amount should be a positive integer in cents.
+
+You'll still need to provide a variant ID but can overwrite the price as you see fit. One thing you can do is create a "generic" product with a specific currency which you can dynamically charge against.
 
 ### Overlay Widget
 
@@ -224,7 +292,7 @@ When a user clicks this button, it'll trigger the Lemon Squeezy checkout overlay
 </x-lemon-button>
 ```
 
-If you're checking out subscriptions, and you don't want to to show the "You will be charged..." text, you may disable this by calling the `withoutSubscriptionPreview` method on the checkout object:
+If you're checking out subscriptions, and you don't want to show the "You will be charged..." text, you may disable this by calling the `withoutSubscriptionPreview` method on the checkout object:
 
 ```php
 $request->user()->subscribe('variant-id')
@@ -267,6 +335,25 @@ Route::get('/buy', function (Request $request) {
 });
 ```
 
+### Product Details
+
+You can overwrite additional data for product checkouts with the `withProductName` and `withDescription` methods:
+
+```php
+$request->user()->checkout('variant-id')
+    ->withProductName('Ebook')
+    ->withDescription('A thrilling novel!');
+```
+
+### Receipt Thank You
+
+Additionally, you can customize the thank you note for the order receipt email.
+
+```php
+$request->user()->checkout('variant-id')
+    ->withThankYouNote('Thanks for your purchase!');
+```
+
 ### Redirects After Purchase
 
 To redirect customers back to your app after purchase, you may use the `redirectTo` method:
@@ -281,6 +368,8 @@ You may also set a default url for this by configuring the `lemon-squeezy.redire
 ```php
 'redirect_url' => 'https://my-app.com/dashboard',
 ```
+
+In order to do this you'll need to [publish your config file](#configuration).
 
 ### Expire Checkouts
 
@@ -317,9 +406,103 @@ Attempting to use any of these will result in an exception being thrown.
 
 ## Customers
 
-### Updating Customers
+### Customer Portal
 
-Right now, it's not possible to update customer objects. Meaning, when they fill out their name, email address, city, region and country initially, there's no possibility of updating it later. To change these fields for a customer in Lemon Squeezy, you'll need to let your customer [contact Lemon Squeezy support](https://www.lemonsqueezy.com/help) so they can do it for you.
+Customers may easily manage their personal data like their name, email address, etc by visiting their [customer portal](https://docs.lemonsqueezy.com/guides/developer-guide/customer-portal). Lemon Squeezy for Laravel makes it easy to redirect customers to this by calling `redirectToCustomerPortal` on the billable:
+
+```php
+use Illuminate\Http\Request;
+ 
+Route::get('/customer-portal', function (Request $request) {
+    return $request->user()->redirectToCustomerPortal();
+});
+```
+
+In order to call this method your billable already needs to have a subscription through Lemon Squeezy. Also, this method will perform an underlying API call so make sure to place this redirect behind a route which you can link to in your app.
+
+Optionally, you also get the signed customer portal url directly:
+
+```php
+$url = $user->customerPortalUrl();
+```
+
+### My Orders
+
+Besides the customer portal for managing subscriptions, [Lemon Squeezy also has a "My Orders" portal](https://docs.lemonsqueezy.com/help/online-store/my-orders) to manage all of your purchases for a customer account. This does involve a mixture of purchases across multiple vendors. If this is something you wish your customers can find, you can link to [`https://app.lemonsqueezy.com/my-orders`](https://app.lemonsqueezy.com/my-orders) and tell them to login with the email address they performed the purchase with.
+
+## Orders
+
+Lemon Squeezy allows you to retrieve a list of all orders made for your store. You can then use this list to present all orders to your customers.
+
+### Retrieving Orders
+
+To retrieve a list of orders for a specific customer, simply call the saved models in the database:
+
+```blade
+<table>
+    @foreach ($user->orders as $order)
+        <td>{{ $order->ordered_at->toFormattedDateString() }}</td>
+        <td>{{ $order->order_number }}</td>
+        <td>{{ $order->subtotal() }}</td>
+        <td>{{ $order->discount() }}</td>
+        <td>{{ $order->tax() }}</td>
+        <td>{{ $order->total() }}</td>
+        <td>{{ $order->receipt_url }}</td>
+    @endforeach
+</table>
+```
+
+### Checking Order Status
+
+To check if an individual order is paid, you may use the `paid` method:
+
+```php
+if ($order->paid()) {
+    // ...
+}
+```
+
+Besides that, you have three other checks you can do: `pending`, `failed` & `refunded`. If the order is `refunded`, you may also use the `refunded_at` timestamp:
+
+```blade
+@if ($order->refunded())
+    Order {{ $order->order_number }} was refunded on {{ $order->refunded_at->toFormattedDateString() }}
+@endif
+```
+
+You can also check if an order was for a specific product:
+
+```php
+if ($order->hasProduct('your-product-id')) {
+    // ...
+}
+```
+
+Or for a specific variant:
+
+```php
+if ($order->hasVariant('your-variant-id')) {
+    // ...
+}
+```
+
+Additionally, you may check if a customer has purchased a specific product:
+
+```php
+if ($user->hasPurchasedProduct('your-product-id')) {
+    // ...
+}
+```
+
+Or a specific variant:
+
+```php
+if ($user->hasPurchasedVariant('your-variant-id')) {
+    // ...
+}
+```
+
+These two checks will both make sure the correct product or variant was purchased and paid for. This is useful as well if you're offering a feature in your app like lifetime access.
 
 ## Subscriptions
 
@@ -515,14 +698,14 @@ This requires you to have set up [Lemon.js](#lemon-js).
 
 ### Changing Plans
 
-When a customer is subscribed to a monthly plan, they might want to upgrade to a better plan, change their payments to a yearly plan or downgrade to a cheaper plan. For these situations, you can allow them to swap plans by passing a different variant id to the `swap` method:
+When a customer is subscribed to a monthly plan, they might want to upgrade to a better plan, change their payments to a yearly plan or downgrade to a cheaper plan. For these situations, you can allow them to swap plans by passing a different variant id with its product id to the `swap` method:
 
 ```php
 use App\Models\User;
 
 $user = User::find(1);
 
-$user->subscription()->swap('variant-id');
+$user->subscription()->swap('product-id', 'variant-id');
 ```
 
 This will swap the customer to their new subscription plan but billing will only be done on the next billing cycle. If you'd like to immediately invoice the customer you may use the `swapAndInvoice` method instead:
@@ -530,8 +713,11 @@ This will swap the customer to their new subscription plan but billing will only
 ```php
 $user = User::find(1);
 
-$user->subscription()->swapAndInvoice('variant-id');
+$user->subscription()->swapAndInvoice('product-id', 'variant-id');
 ```
+
+> [!NOTE]
+> You'll notice in the above methods that you both need to provide a product ID and variant ID and might wonder why that is. Can't you derive the product ID from the variant ID? Unfortuntately that's only possible when swapping to variants between the same product. When swapping to a different product alltogether you are required to also provide the product ID in the Lemon Squeezy API. Therefor, we've made the decision to make this uniform and just always require the product ID as well.
 
 #### Prorations
 
@@ -540,8 +726,20 @@ By default, Lemon Squeezy will prorate amounts when changing plans. If you want 
 ```php
 $user = User::find(1);
 
-$user->subscription()->noProrate()->swap('variant-id');
+$user->subscription()->noProrate()->swap('product-id', 'variant-id');
 ```
+
+### Changing The Billing Date
+
+To change the date of the month on which your customer gets billed for their subscription, you may use the `anchorBillingCycleOn` method:
+
+```php
+$user = User::find(1);
+
+$user->subscription()->anchorBillingCycleOn(21);
+```
+
+In the above example, the customer will now get billed on the 21st of each month going forward. For more info, see [the Lemon Squeezy docs](https://docs.lemonsqueezy.com/guides/developer-guide/managing-subscriptions#changing-the-billing-date).
 
 ### Multiple Subscriptions
 
@@ -564,7 +762,7 @@ $user = User::find(1);
 $subscription = $user->subscription('swimming');
 
 // Swap plans for the gym subscription type...
-$user->subscription('gym')->swap('variant-id');
+$user->subscription('gym')->swap('product-id', 'variant-id');
 
 // Cancel the swimming subscription...
 $user->subscription('swimming')->cancel();
@@ -642,7 +840,7 @@ When a cancelled subscription reaches the end of its grace period it'll transiti
 
 For a thorough read on trialing in Lemon Squeezy, [have a look at their guide](https://docs.lemonsqueezy.com/guides/tutorials/saas-free-trials).
 
-### No Payment Required
+#### No Payment Required
 
 To allow people to signup for your product without having them to fill out their payment details, you may set the `trial_ends_at` column when creating them as a customer:
 
@@ -694,7 +892,7 @@ Route::get('/buy', function (Request $request) {
 
 Please note that when a customer starts their subscription when they're still on their generic trial, their trial will be cancelled because they have started to pay for your product.
 
-### Payment required
+#### Payment required
 
 Another option is to require payment details when people want to trial your products. This means that after the trial expires, they'll immediately be subscribed to your product. To get started with this, you'll need to [configure a trial period in your product's settings](https://docs.lemonsqueezy.com/guides/tutorials/saas-free-trials#1-create-subscription-products-with-trials). Then, let a customer start a subscription:
 
@@ -732,9 +930,21 @@ if ($user->subscription()->hasExpiredTrial()) {
 }
 ```
 
+##### Ending Trials Early
+
+To end a trial with payment upfront early you may use the `endTrial` method on a subscription:
+
+```php
+$user = User::find(1);
+
+$user->subscription()->endTrial();
+```
+
+This method will move the billing achor to the current day and thus ending any trial period the customer had.
+
 ## Handling Webhooks
 
-Lemon Squeezy can send your app webhooks which you can react on. By default, this package alread does the bulk of the work for you. [If you've properly set up webhooks](#webhooks), it'll listen to any incoming events and update your database accordingly. We recommend enabling all event types so it's easy for you to upgrade in the future.
+Lemon Squeezy can send your app webhooks which you can react on. By default, this package already does the bulk of the work for you. [If you've properly set up webhooks](#webhooks), it'll listen to any incoming events and update your database accordingly. We recommend enabling all event types so it's easy for you to upgrade in the future.
 
 To listen to incoming webhooks, we have two events that will be fired:
 
@@ -766,9 +976,9 @@ class LemonSqueezyEventListener
 }
 ```
 
-For an example payload, [take a look at the Lemon Squeezy API docs](https://docs.lemonsqueezy.com/api/webhooks#webhook-requests). 
+For an example payload, [take a look at the Lemon Squeezy docs](https://docs.lemonsqueezy.com/help/webhooks/webhook-requests). 
 
-Once you have a listener, wire it up in your app's `EventServiceProvider`:
+Laravel v11 and up will detect the listener automatically. If you're on Laravel v10 or lower, you should wire it up in your app's `EventServiceProvider`:
 
 ```php
 <?php
@@ -793,6 +1003,8 @@ class EventServiceProvider extends ServiceProvider
 
 Instead of listening to the `WebhookHandled` event, you may also subscribe to one of the following, dedicated package events that are fired after a webhook has been handled:
 
+- `LemonSqueezy\Laravel\Events\OrderCreated`
+- `LemonSqueezy\Laravel\Events\OrderRefunded`
 - `LemonSqueezy\Laravel\Events\SubscriptionCreated`
 - `LemonSqueezy\Laravel\Events\SubscriptionUpdated`
 - `LemonSqueezy\Laravel\Events\SubscriptionCancelled`
@@ -800,8 +1012,13 @@ Instead of listening to the `WebhookHandled` event, you may also subscribe to on
 - `LemonSqueezy\Laravel\Events\SubscriptionExpired`
 - `LemonSqueezy\Laravel\Events\SubscriptionPaused`
 - `LemonSqueezy\Laravel\Events\SubscriptionUnpaused`
+- `LemonSqueezy\Laravel\Events\SubscriptionPaymentSuccess`
+- `LemonSqueezy\Laravel\Events\SubscriptionPaymentFailed`
+- `LemonSqueezy\Laravel\Events\SubscriptionPaymentRecovered`
+- `LemonSqueezy\Laravel\Events\LicenseKeyCreated`
+- `LemonSqueezy\Laravel\Events\LicenseKeyUpdated`
 
-All of these events contain a billable `$model` instance, a `$subscription` object and the event `$payload`. These can be accessed through their public properties.
+All of these events contain a billable `$model` instance and the event `$payload`. The subscription events also contain the `$subscription` object. These can be accessed through their public properties.
 
 ## Changelog
 

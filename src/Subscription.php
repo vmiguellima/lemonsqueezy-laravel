@@ -3,6 +3,7 @@
 namespace LemonSqueezy\Laravel;
 
 use Carbon\Carbon;
+use Carbon\CarbonInterface;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -13,28 +14,45 @@ use LemonSqueezy\Laravel\Database\Factories\SubscriptionFactory;
 use LogicException;
 
 /**
- * @property \LemonSqueezy\Laravel\Billable $billable
+ * @property int $id
+ * @property string|int $billable_id
+ * @property string $billable_type
+ * @property string $type
+ * @property string $lemon_squeezy_id
+ * @property string $status
+ * @property string $product_id
+ * @property string $variant_id
+ * @property string|null $card_brand
+ * @property string|null $card_last_four
+ * @property string|null $pause_mode
+ * @property CarbonInterface|null $pause_resumes_at
+ * @property CarbonInterface|null $trial_ends_at
+ * @property CarbonInterface|null $renews_at
+ * @property CarbonInterface|null $ends_at
+ * @property CarbonInterface|null $created_at
+ * @property CarbonInterface|null $updated_at
+ * @property Billable $billable
  */
 class Subscription extends Model
 {
     use HasFactory;
     use Prorates;
 
-    const STATUS_ON_TRIAL = 'on_trial';
+    public const STATUS_ON_TRIAL = 'on_trial';
 
-    const STATUS_ACTIVE = 'active';
+    public const STATUS_ACTIVE = 'active';
 
-    const STATUS_PAUSED = 'paused';
+    public const STATUS_PAUSED = 'paused';
 
-    const STATUS_PAST_DUE = 'past_due';
+    public const STATUS_PAST_DUE = 'past_due';
 
-    const STATUS_UNPAID = 'unpaid';
+    public const STATUS_UNPAID = 'unpaid';
 
-    const STATUS_CANCELLED = 'cancelled';
+    public const STATUS_CANCELLED = 'cancelled';
 
-    const STATUS_EXPIRED = 'expired';
+    public const STATUS_EXPIRED = 'expired';
 
-    const DEFAULT_TYPE = 'default';
+    public const DEFAULT_TYPE = 'default';
 
     /**
      * The table associated with the model.
@@ -71,14 +89,14 @@ class Subscription extends Model
     }
 
     /**
-     * Determine if the subscription is active, on trial, paused for free, or within its grace period.
+     * Determine if the subscription is active, on trial, past due, paused for free, or within its grace period.
      */
     public function valid(): bool
     {
         return $this->active() ||
             $this->onTrial() ||
             $this->pastDue() ||
-            $this->cancelled() ||
+            $this->onGracePeriod() ||
             ($this->paused() && $this->pause_mode === 'free');
     }
 
@@ -255,6 +273,14 @@ class Subscription extends Model
     }
 
     /**
+     * End the current trial by resetting the billing anchor to today.
+     */
+    public function endTrial(): self
+    {
+        return $this->anchorBillingCycleOn(0);
+    }
+
+    /**
      * Swap the subscription to a new product plan.
      */
     public function swap(string $product, string $variant, array $attributes = []): self
@@ -325,7 +351,7 @@ class Subscription extends Model
     /**
      * Pause the subscription and prevent the user from using the service.
      */
-    public function pause(DateTimeInterface $resumesAt = null): self
+    public function pause(?DateTimeInterface $resumesAt = null): self
     {
         $response = LemonSqueezy::api('PATCH', "subscriptions/{$this->lemon_squeezy_id}", [
             'data' => [
@@ -348,7 +374,7 @@ class Subscription extends Model
     /**
      * Pause the subscription but let the user continue to use the service for free.
      */
-    public function pauseForFree(DateTimeInterface $resumesAt = null): self
+    public function pauseForFree(?DateTimeInterface $resumesAt = null): self
     {
         $response = LemonSqueezy::api('PATCH', "subscriptions/{$this->lemon_squeezy_id}", [
             'data' => [
@@ -405,8 +431,8 @@ class Subscription extends Model
     {
         $this->update([
             'status' => $attributes['status'],
-            'product_id' => $attributes['product_id'],
-            'variant_id' => $attributes['variant_id'],
+            'product_id' => (string) $attributes['product_id'],
+            'variant_id' => (string) $attributes['variant_id'],
             'card_brand' => $attributes['card_brand'] ?? null,
             'card_last_four' => $attributes['card_last_four'] ?? null,
             'pause_mode' => $attributes['pause']['mode'] ?? null,

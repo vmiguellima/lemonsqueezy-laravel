@@ -6,10 +6,17 @@ use Exception;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use LemonSqueezy\Laravel\Exceptions\LemonSqueezyApiError;
+use Money\Currencies\ISOCurrencies;
+use Money\Currency;
+use Money\Formatter\IntlMoneyFormatter;
+use Money\Money;
+use NumberFormatter;
 
 class LemonSqueezy
 {
-    const VERSION = '0.2.0';
+    public const VERSION = '1.8.2';
+
+    public const API = 'https://api.lemonsqueezy.com/v1';
 
     /**
      * Indicates if migrations will be run.
@@ -32,6 +39,11 @@ class LemonSqueezy
     public static string $subscriptionModel = Subscription::class;
 
     /**
+     * The order model class name.
+     */
+    public static string $orderModel = Order::class;
+
+    /**
      * Perform a Lemon Squeezy API call.
      *
      * @throws Exception
@@ -45,16 +57,36 @@ class LemonSqueezy
 
         /** @var \Illuminate\Http\Client\Response $response */
         $response = Http::withToken($apiKey)
-            ->withUserAgent('LemonSqueezy\Laravel/'.static::VERSION)
+            ->withUserAgent('LemonSqueezy\Laravel/' . static::VERSION)
             ->accept('application/vnd.api+json')
             ->contentType('application/vnd.api+json')
-            ->$method("https://api.lemonsqueezy.com/v1/{$uri}", $payload);
+            ->$method(static::API . "/{$uri}", $payload);
 
         if ($response->failed()) {
             throw new LemonSqueezyApiError($response['errors'][0]['detail'], (int) $response['errors'][0]['status']);
         }
 
         return $response;
+    }
+
+    /**
+     * Format the given amount into a displayable currency.
+     */
+    public static function formatAmount(int $amount, string $currency, ?string $locale = null, array $options = []): string
+    {
+        $money = new Money($amount, new Currency(strtoupper($currency)));
+
+        $locale = $locale ?? config('lemon-squeezy.currency_locale');
+
+        $numberFormatter = new NumberFormatter($locale, NumberFormatter::CURRENCY);
+
+        if (isset($options['min_fraction_digits'])) {
+            $numberFormatter->setAttribute(NumberFormatter::MIN_FRACTION_DIGITS, $options['min_fraction_digits']);
+        }
+
+        $moneyFormatter = new IntlMoneyFormatter($numberFormatter, new ISOCurrencies());
+
+        return $moneyFormatter->format($money);
     }
 
     /**
@@ -87,5 +119,13 @@ class LemonSqueezy
     public static function useSubscriptionModel(string $subscriptionModel): void
     {
         static::$subscriptionModel = $subscriptionModel;
+    }
+
+    /**
+     * Set the order model class name.
+     */
+    public static function useOrderModel(string $orderModel): void
+    {
+        static::$orderModel = $orderModel;
     }
 }

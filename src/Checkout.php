@@ -30,13 +30,19 @@ class Checkout implements Responsable
 
     private array $custom = [];
 
+    private ?string $productName = null;
+
+    private ?string $description = null;
+
+    private ?string $thankYouNote = null;
+
     private ?string $redirectUrl;
 
     private ?DateTimeInterface $expiresAt;
 
-    public function __construct(private string $store, private string $variant)
-    {
-    }
+    private ?int $customPrice = null;
+
+    public function __construct(private string $store, private string $variant) {}
 
     public static function make(string $store, string $variant): static
     {
@@ -113,7 +119,7 @@ class Checkout implements Responsable
         return $this;
     }
 
-    public function withBillingAddress(string $country, string $zip = null): self
+    public function withBillingAddress(string $country, ?string $zip = null): self
     {
         $this->checkoutData['billing_address'] = array_filter([
             'country' => $country,
@@ -148,9 +154,30 @@ class Checkout implements Responsable
         }
 
         $this->custom = collect(array_replace_recursive($this->custom, $custom))
-            ->map(fn ($value) => is_string($value) ? trim($value) : $value)
-            ->filter(fn ($value) => ! is_null($value))
+            ->map(fn($value) => is_string($value) ? trim($value) : $value)
+            ->filter(fn($value) => ! is_null($value))
             ->toArray();
+
+        return $this;
+    }
+
+    public function withProductName(string $productName): self
+    {
+        $this->productName = $productName;
+
+        return $this;
+    }
+
+    public function withDescription(string $description): self
+    {
+        $this->description = $description;
+
+        return $this;
+    }
+
+    public function withThankYouNote(string $thankYouNote): self
+    {
+        $this->thankYouNote = $thankYouNote;
 
         return $this;
     }
@@ -169,15 +196,23 @@ class Checkout implements Responsable
         return $this;
     }
 
+    public function withCustomPrice(?int $customPrice): self
+    {
+        $this->customPrice = $customPrice;
+
+        return $this;
+    }
+
     public function url(): string
     {
         $response = LemonSqueezy::api('POST', 'checkouts', [
             'data' => [
                 'type' => 'checkouts',
                 'attributes' => [
+                    'custom_price' => $this->customPrice,
                     'checkout_data' => array_merge(
-                        array_filter($this->checkoutData, fn ($value) => $value !== ''),
-                        ['custom' => $this->custom]
+                        array_filter($this->checkoutData, fn($value) => $value !== ''),
+                        ['custom' => $this->custom],
                     ),
                     'checkout_options' => array_filter([
                         'embed' => $this->embed,
@@ -191,9 +226,12 @@ class Checkout implements Responsable
                     ], function ($value) {
                         return ! is_null($value);
                     }),
-                    'product_options' => [
+                    'product_options' => array_filter([
+                        'name' => $this->productName,
+                        'description' => $this->description,
+                        'receipt_thank_you_note' => $this->thankYouNote,
                         'redirect_url' => $this->redirectUrl ?? config('lemon-squeezy.redirect_url'),
-                    ],
+                    ]),
                     'expires_at' => isset($this->expiresAt) ? $this->expiresAt->format(DateTimeInterface::ATOM) : null,
                 ],
                 'relationships' => [
